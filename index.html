@@ -391,21 +391,24 @@
             "إجازة منتصف الفصل", "إجازة مطولة", "إجازة عيد الفطر", "إجازة عيد الأضحى", "إجازة اليوم الوطني", "إجازة يوم التأسيس", "أسبوع التهيئة"
         ];
 
-        let usersDB = {};
-        
-async function loadUsersDB() {
-    try {
-        const docSnap = await getDoc(doc(db, "system", "usersDB"));
-        if (docSnap.exists()) {
-            usersDB = docSnap.data();
-        } else {
-            usersDB = JSON.parse(JSON.stringify(DEFAULT_USERS_BY_ROLE));
-            await setDoc(doc(db, "system", "usersDB"), usersDB);
+// 1. تعريف المستخدمين والبيانات كقيم افتراضية أولاً (كخطة طوارئ)
+        let usersDB = JSON.parse(JSON.stringify(DEFAULT_USERS_BY_ROLE));
+        let globalData = { settings: {} };
+
+        // 2. دوال تحميل البيانات السحابية مع نظام الحماية من الانهيار
+        async function loadUsersDB() {
+            try {
+                const docSnap = await getDoc(doc(db, "system", "usersDB"));
+                if (docSnap.exists()) {
+                    usersDB = docSnap.data();
+                } else {
+                    await setDoc(doc(db, "system", "usersDB"), usersDB);
+                }
+            } catch (error) {
+                console.warn("تعذر جلب المستخدمين من السحابة، سيتم استخدام الحسابات الافتراضية.", error);
+            }
         }
-    } catch (e) {
-        console.error("Error loading users:", e);
-    }
-}
+
         loadUsersDB();
 
         let loggedInUser = null, canEditCurrentPlan = false, globalData = {}, currentKey = "", currentState = null, barChartInst = null, doughChartInst = null;
@@ -771,26 +774,28 @@ async function loadUsersDB() {
         }
 
 async function loadGlobalData() {
-    try {
-        const docSnap = await getDoc(doc(db, "system", "masterData"));
-        if (docSnap.exists()) {
-            globalData = docSnap.data();
-        } else {
-            globalData = { settings: {} };
+            try {
+                const docSnap = await getDoc(doc(db, "system", "masterData"));
+                if (docSnap.exists()) {
+                    globalData = docSnap.data();
+                } else {
+                    globalData = { settings: {} };
+                    await setDoc(doc(db, "system", "masterData"), globalData);
+                }
+                if (!globalData.settings) globalData.settings = {};
+            } catch (error) {
+                console.warn("تعذر جلب البيانات من السحابة.", error);
+                if (!globalData.settings) globalData.settings = {};
+            }
         }
-        if (!globalData.settings) globalData.settings = {};
-    } catch (e) {
-        console.error("Error loading global data:", e);
-    }
-}
 
 async function saveGlobalData() { 
-    try {
-        await setDoc(doc(db, "system", "masterData"), globalData); 
-    } catch (e) {
-        console.error("Error saving data:", e);
-    }
-}
+            try {
+                await setDoc(doc(db, "system", "masterData"), globalData); 
+            } catch (error) {
+                console.error("خطأ في حفظ البيانات:", error);
+            }
+        }
 
 onSnapshot(doc(db, "system", "masterData"), (doc) => {
     if (doc.exists()) {
@@ -1277,19 +1282,23 @@ onSnapshot(doc(db, "system", "masterData"), (doc) => {
         }
 
 async function saveUsersDB() {
-    if(!loggedInUser.isAdmin) return;
-    for(const role in usersDB) {
-        const uInput = document.getElementById(`usr_${role}`);
-        const pInput = document.getElementById(`pwd_${role}`);
-        if(uInput && pInput) {
-            usersDB[role].username = uInput.value.trim();
-            usersDB[role].pass = pInput.value.trim();
+            if(!loggedInUser.isAdmin) return;
+            for(const role in usersDB) {
+                const uInput = document.getElementById(`usr_${role}`);
+                const pInput = document.getElementById(`pwd_${role}`);
+                if(uInput && pInput) {
+                    usersDB[role].username = uInput.value.trim();
+                    usersDB[role].pass = pInput.value.trim();
+                }
+            }
+            try {
+                await setDoc(doc(db, "system", "usersDB"), usersDB);
+                closeManageUsersModal();
+                alert('تم حفظ وتحديث بيانات المستخدمين بنجاح في السحابة.');
+            } catch (error) {
+                alert('حدث خطأ أثناء الحفظ، يرجى التأكد من صلاحيات Firebase (Rules).');
+            }
         }
-    }
-    await setDoc(doc(db, "system", "usersDB"), usersDB);
-    closeManageUsersModal();
-    alert('تم حفظ وتحديث بيانات المستخدمين بنجاح.');
-}
 
         function toggleTheme() {
             const isDark = document.documentElement.classList.toggle('dark');
@@ -1297,23 +1306,33 @@ async function saveUsersDB() {
             updateAnalytics();
         }
 
-document.addEventListener('DOMContentLoaded', async () => {
-    // Keep theme logic...
-    const isDark = localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    document.documentElement.classList.toggle('dark', isDark);
-    
-    const viewingDateEl = document.getElementById('viewingDateDisplay');
-    const printDateEl = document.getElementById('currentDatePrint');
-    const currentDateStr = new Date().toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric' });
-    
-    if (viewingDateEl) viewingDateEl.innerText = 'تاريخ الطباعة: ' + currentDateStr;
-    if (printDateEl) printDateEl.innerText = 'تاريخ الطباعة: ' + currentDateStr;
-    
-    const loginForm = document.getElementById('loginForm');
-    if (loginForm) loginForm.addEventListener('submit', handleLogin);
+// 3. تهيئة النظام عند تشغيل الصفحة (بشكل متزامن Async)
+        document.addEventListener('DOMContentLoaded', async () => {
+            // إيقاف التحديث التلقائي للصفحة عند الضغط على زر الدخول
+            const loginForm = document.getElementById('loginForm');
+            if (loginForm) {
+                loginForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    handleLogin(e);
+                });
+            }
 
-await loadUsersDB();
-    await loadGlobalData();
+            const isDark = localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            document.documentElement.classList.toggle('dark', isDark);
+            
+            const viewingDateEl = document.getElementById('viewingDateDisplay');
+            const printDateEl = document.getElementById('currentDatePrint');
+            const currentDateStr = new Date().toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric' });
+            
+            if (viewingDateEl) viewingDateEl.innerText = 'تاريخ الطباعة: ' + currentDateStr;
+            if (printDateEl) printDateEl.innerText = 'تاريخ الطباعة: ' + currentDateStr;
+            
+            // محاولة جلب البيانات من الإنترنت أولاً
+            await loadUsersDB();
+            await loadGlobalData();
+
+            checkAuth(); // فحص الجلسة وإظهار النظام
+        });
             
             const clearBtn = document.getElementById('clearDataBtn');
             if (clearBtn) clearBtn.addEventListener('click', () => { 
