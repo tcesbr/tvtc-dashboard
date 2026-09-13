@@ -888,7 +888,7 @@ function updateSystemStartDate() {
             };
         }
 
-        function changeContext() {
+function changeContext() {
             const role = document.getElementById('roleSelector').value, year = document.getElementById('yearSelector').value, sem = document.getElementById('semesterSelector').value;
             canEditCurrentPlan = (loggedInUser.role === role);
             currentKey = `${role}_${year}_${sem}`;
@@ -900,7 +900,11 @@ function updateSystemStartDate() {
 
             if (!globalData[currentKey]) {
                 globalData[currentKey] = createEmptyState(role);
-                saveGlobalData(); // حفظ الخطة لأول مرة
+                // حفظ موجه عند إنشاء روزنامة جديدة للقسم
+                db.collection("system").doc("masterData").set(
+                    { [currentKey]: globalData[currentKey] }, 
+                    { merge: true }
+                );
             } else {
                 let dataUpdated = false;
                 if (globalData[currentKey].notesAndChallenges === undefined) {
@@ -919,7 +923,14 @@ function updateSystemStartDate() {
                         }
                     });
                 });
-                if (dataUpdated) saveGlobalData();
+                
+                // دمج التحديثات الناقصة فقط إن وجدت
+                if (dataUpdated) {
+                    db.collection("system").doc("masterData").set(
+                        { [currentKey]: globalData[currentKey] }, 
+                        { merge: true }
+                    );
+                }
             }
             
             currentState = globalData[currentKey];
@@ -961,7 +972,7 @@ function updateSystemStartDate() {
             return false;
         }
 
-        function updateTaskFields(weekIndex, taskIndex, updates) {
+function updateTaskFields(weekIndex, taskIndex, updates) {
             const isFileUpdate = 'fileName' in updates;
             const isDetailsUpdate = 'text' in updates || 'status' in updates;
             const isQualityNoteUpdate = 'qualityNote' in updates;
@@ -970,17 +981,32 @@ function updateSystemStartDate() {
             if (isDetailsUpdate && !canEditTaskDetails(taskIndex)) return;
             if (isQualityNoteUpdate && !loggedInUser.isAdmin) return;
             
+            let needsRender = false;
+
             for (const [field, value] of Object.entries(updates)) {
                 currentState.weeks[weekIndex].tasks[taskIndex][field] = value;
+                if (field === 'status' || field === 'fileName' || field === 'qualityNote') needsRender = true;
             }
-            saveGlobalData(); // سيقوم onSnapshot بتحديث الواجهة تلقائياً
+            
+            // الحل الجذري: حفظ وتحديث مهمة "هذا القسم فقط" بالسحابة، دون التأثير على ملفات بقية الأقسام!
+            db.collection("system").doc("masterData").set(
+                { [currentKey]: currentState }, 
+                { merge: true }
+            ).then(() => {
+                if(needsRender) { renderTable(); if(updates.status !== undefined) updateAnalytics(); }
+            }).catch(e => console.error("Error saving task:", e));
         }
 
-        function updateEmployeeNotes(val) {
+function updateEmployeeNotes(val) {
             if (!currentState) return;
             if (!(canEditCurrentPlan || loggedInUser.isAdmin)) return;
             currentState.notesAndChallenges = val;
-            saveGlobalData();
+            
+            // حفظ موجه للقسم فقط
+            db.collection("system").doc("masterData").set(
+                { [currentKey]: currentState }, 
+                { merge: true }
+            );
         }
 
         // --- رفع الملفات عبر Cloudinary ---
