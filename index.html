@@ -718,7 +718,7 @@
             return `الأسبوع ${wIdx + 1}`;
         }
 
-        function updateWeekName(wIdx, newName) {
+function updateWeekName(wIdx, newName) {
             if(!loggedInUser.isAdmin) return;
             const year = document.getElementById('yearSelector').value;
             const sem = document.getElementById('semesterSelector').value;
@@ -728,8 +728,15 @@
             if(!globalData.settings[key]) globalData.settings[key] = {};
             
             globalData.settings[key][wIdx] = newName;
-            saveGlobalData();
-            // renderTable and Analytics are handled by the onSnapshot listener automatically
+            
+            // حفظ آمن لأسماء الأسابيع في السحابة
+            db.collection("system").doc("masterData").set(
+                { settings: { [key]: globalData.settings[key] } }, 
+                { merge: true }
+            ).then(() => {
+                renderTable(); 
+                updateAnalytics();
+            }).catch(e => console.error("خطأ في حفظ اسم الأسبوع:", e));
         }
 
         function checkAuth() {
@@ -803,20 +810,33 @@
             changeContext(); 
         }
 
-        async function loadGlobalData() {
+async function loadGlobalData() {
             try {
                 const docSnap = await db.collection("system").doc("masterData").get();
                 if (docSnap.exists) { globalData = docSnap.data(); }
                 if (!globalData.settings) globalData.settings = {};
 
-                // المزامنة اللحظية (Real-time updates)
+                // المزامنة اللحظية الشاملة
                 db.collection("system").doc("masterData").onSnapshot((doc) => {
                     if (doc.exists) {
                         globalData = doc.data();
+                        if (!globalData.settings) globalData.settings = {};
+                        
                         if(currentKey && globalData[currentKey]) {
                             currentState = globalData[currentKey];
+                            
+                            // تحديث الملاحظات
                             const notesEl = document.getElementById('employeeNotes');
                             if (notesEl) { notesEl.value = currentState.notesAndChallenges || ''; }
+                            
+                            // تحديث خانة التاريخ اللحظي لمدير الجودة لمنع اختفائه
+                            const year = document.getElementById('yearSelector').value;
+                            const sem = document.getElementById('semesterSelector').value;
+                            const dateInput = document.getElementById('systemStartDate');
+                            if (dateInput) {
+                                dateInput.value = globalData.settings[`${year}_${sem}_startDate`] || "2026-01-18";
+                            }
+                            
                             renderTable();
                             updateAnalytics();
                         }
@@ -832,14 +852,23 @@
             try { await db.collection("system").doc("masterData").set(globalData); } catch (e) { console.error("Error saving data", e); }
         }
 
-        function updateSystemStartDate() {
+function updateSystemStartDate() {
             const val = document.getElementById('systemStartDate').value;
             const year = document.getElementById('yearSelector').value;
             const sem = document.getElementById('semesterSelector').value;
+            
             if(val) {
                 if(!globalData.settings) globalData.settings = {};
-                globalData.settings[`${year}_${sem}_startDate`] = val;
-                saveGlobalData();
+                const key = `${year}_${sem}_startDate`;
+                globalData.settings[key] = val; // تحديث محلي
+                
+                // حفظ آمن وموجه للسحابة يمنع الضياع بعد تسجيل الخروج
+                db.collection("system").doc("masterData").set(
+                    { settings: { [key]: val } }, 
+                    { merge: true }
+                ).then(() => {
+                    renderTable();
+                }).catch(e => console.error("خطأ في حفظ التاريخ:", e));
             }
         }
 
